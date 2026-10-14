@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ja"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>storage-check</title>
+<meta name="theme-color" content="#0f1117">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="icon.svg">
+<style>
+:root{--bg:#0f1117;--p:#181b24;--p2:#232837;--bd:#2c3345;--tx:#eef1f7;--dim:#9aa3b8;--ok:#3ecf8e;--warn:#f5c842;--ng:#ff6b6b;--blue:#4a9eff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.55 -apple-system,"Hiragino Sans",sans-serif;padding:calc(10px + env(safe-area-inset-top)) 14px calc(40px + env(safe-area-inset-bottom));max-width:640px;margin:0 auto}
+h1{font-size:18px;margin:6px 0 4px}.sub{font-size:12px;color:var(--dim);margin-bottom:12px;line-height:1.6}
+.card{background:var(--p);border:1px solid var(--bd);border-radius:14px;padding:12px;margin-bottom:12px}
+.card h2{margin:0 0 8px;font-size:14px;color:var(--dim)}
+button{font:inherit;color:var(--tx);background:var(--p2);border:1px solid var(--bd);border-radius:10px;padding:9px 13px;min-height:42px}button.pri{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:700}button:disabled{opacity:.4}
+.bar{height:12px;background:var(--p2);border-radius:6px;overflow:hidden;margin:6px 0}.bar i{display:block;height:100%;background:var(--ok)}
+.big{font-size:26px;font-weight:700}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.app{display:flex;gap:8px;align-items:center;padding:7px 0;border-top:1px solid var(--bd);font-size:14px}.app:first-of-type{border-top:none}
+.app .n{flex:1;min-width:0}.app small{display:block;color:var(--dim);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.app .b{width:90px}.app .v{width:74px;text-align:right;font-variant-numeric:tabular-nums}
+.warn{color:var(--warn)}.ng{color:var(--ng)}.ok{color:var(--ok)}
+pre{white-space:pre-wrap;font-size:12px;background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:8px;color:var(--dim)}
+.msg{font-size:13px;line-height:1.7}
+</style></head><body>
+<h1>💾 storage-check</h1>
+<div class="sub">このブラウザ（<span id="orig"></span>）に保存されている、全アプリ分のデータ量を調べます。中身は表示せず、キー名とサイズだけを出します。</div>
+<div class="row" style="margin-bottom:12px"><button class="pri" id="go">🔍 調べる</button><button id="probe">📏 localStorageの残りを実測</button><button id="persist">🔒 消えにくくする</button><button id="copy">📋 結果をコピー</button></div>
+<div id="out"></div>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);$('orig').textContent=location.origin;
+const KB=n=>n<1024?n+'B':n<1048576?(n/1024).toFixed(n<10240?1:0)+'KB':(n/1048576).toFixed(2)+'MB';
+const APPS=[[/^(tp_|tablepad)/i,'table-pad'],[/^(qr_|quickref|quick-ref)/i,'quick-ref'],[/^(cryptovault|vault|cv_)/i,'crypto-vault'],[/^(dei_|sn_|speak|is_transfer)/i,'speak-native'],[/^(fm_|flowmind|flow-mind|flow_)/i,'flow-mind'],[/^(ml_|ms_|music|vocal|chord|beat|score)/i,'music-suite'],[/^(ls_|leadsheet)/i,'lead-sheet'],[/^(el_)/i,'ear-first'],[/^(vp_|voicepad|voice)/i,'voice-pad'],[/^(ec_|ecosystem|hub_|emotion)/i,'ecosystem']];
+const appOf=k=>{for(const [re,n] of APPS)if(re.test(k))return n;return'（分類不明）'};
+let REPORT='';
+function lsReport(){const by={};let total=0,n=0;try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i),v=localStorage.getItem(k)||'';const sz=(k.length+v.length)*2;total+=sz;n++;const a=appOf(k);(by[a]=by[a]||{sz:0,keys:[]});by[a].sz+=sz;by[a].keys.push([k,sz])}}catch(e){return{err:String(e)}}return{by,total,n}}
+async function idbReport(){const out=[];if(!indexedDB.databases)return{list:null};let dbs=[];try{dbs=await indexedDB.databases()}catch(e){return{list:null}}
+  for(const d of dbs){if(!d.name)continue;try{const db=await new Promise((ok,ng)=>{const r=indexedDB.open(d.name);r.onsuccess=()=>ok(r.result);r.onerror=()=>ng(r.error);r.onblocked=()=>ng(new Error('blocked'))});
+    let sz=0,cnt=0,stores=[...db.objectStoreNames],capped=false;
+    for(const s of stores){await new Promise(res=>{try{const tx=db.transaction(s,'readonly'),st=tx.objectStore(s);let c=0,b=0;const q=st.openCursor();q.onsuccess=()=>{const cur=q.result;if(!cur||c>=3000){if(cur)capped=true;cnt+=c;sz+=b;res();return}c++;try{const v=cur.value;b+=(v instanceof Blob)?v.size:(v&&v.size!=null&&typeof v!=='object'?v.size:JSON.stringify(v).length*2)}catch(e){b+=200}cur.continue()};q.onerror=()=>res()}catch(e){res()}})}
+    db.close();out.push({name:d.name,sz,cnt,stores:stores.length,capped,app:appOf(d.name)})}catch(e){out.push({name:d.name,sz:0,cnt:0,stores:0,err:true,app:appOf(d.name)})}}
+  return{list:out}}
+const LIMIT=5*1024*1024;
+function appRow(name,sz,sub,max){const pct=Math.min(100,sz/max*100);return '<div class="app"><div class="n">'+name+'<small>'+sub+'</small></div><div class="b"><div class="bar" style="margin:0"><i style="width:'+pct+'%;background:'+(pct>60?'var(--ng)':pct>30?'var(--warn)':'var(--ok)')+'"></i></div></div><div class="v">'+KB(sz)+'</div></div>'}
+async function run(){$('go').disabled=true;$('out').innerHTML='<div class="card msg">調べています…</div>';
+  let h='',rep=['storage-check '+new Date().toLocaleString('ja-JP')+' '+location.origin];
+  // 全体
+  let est=null;try{est=await navigator.storage.estimate()}catch(e){}
+  let pers=null;try{pers=await navigator.storage.persisted()}catch(e){}
+  if(est){const p=est.quota?est.usage/est.quota*100:0;h+='<div class="card"><h2>ブラウザ全体（IndexedDB・キャッシュなど）</h2><div class="big">'+KB(est.usage)+' <span style="font-size:14px;color:var(--dim)">/ 目安 '+KB(est.quota)+'</span></div><div class="bar"><i style="width:'+Math.max(1,p)+'%"></i></div><div class="msg">'+(p<10?'<span class="ok">✔ 余裕があります</span>':p<60?'<span class="warn">そろそろ注意</span>':'<span class="ng">⚠ 残りわずかです</span>')+'　消えにくい設定：'+(pers===true?'<span class="ok">ON</span>':pers===false?'<span class="warn">OFF（「消えにくくする」を押すと改善することがあります）</span>':'不明')+'</div></div>';rep.push('全体 '+KB(est.usage)+' / '+KB(est.quota)+' persisted='+pers)}
+  // localStorage
+  const L=lsReport();
+  if(L.err){h+='<div class="card ng">localStorageを読めませんでした：'+L.err+'</div>'}else{
+    const p=L.total/LIMIT*100;h+='<div class="card"><h2>localStorage（上限は約5MB。全アプリの合計）</h2><div class="big">'+KB(L.total)+' <span style="font-size:14px;color:var(--dim)">/ 約5MB（'+p.toFixed(0)+'%）</span></div><div class="bar"><i style="width:'+Math.max(1,Math.min(100,p))+'%;background:'+(p>85?'var(--ng)':p>60?'var(--warn)':'var(--ok)')+'"></i></div>'
+      +'<div class="msg">'+(p>85?'<span class="ng">⚠ 満杯に近いです。保存が黙って失敗する前に、大きいアプリから整理・移行してください。</span>':p>60?'<span class="warn">注意：6割を超えています。</span>':'<span class="ok">✔ 今は余裕があります。</span>')+'　キー '+L.n+' 個</div>';
+    rep.push('localStorage '+KB(L.total)+' ('+p.toFixed(0)+'%) keys='+L.n);
+    const arr=Object.entries(L.by).sort((a,b)=>b[1].sz-a[1].sz);
+    h+='<div style="margin-top:8px">'+arr.map(([n,o])=>{const top=o.keys.sort((a,b)=>b[1]-a[1]).slice(0,3).map(k=>k[0]+' '+KB(k[1])).join('、');rep.push('  '+n+' '+KB(o.sz)+'  '+top);return appRow(n,o.sz,top,LIMIT)}).join('')+'</div></div>';
+    if(arr.length&&arr[0][1].sz>LIMIT*.2)h+='<div class="card msg">📌 <b>移行の優先順位：</b>1位 <b>'+arr[0][0]+'</b>（'+KB(arr[0][1].sz)+'）'+(arr[1]?'、2位 '+arr[1][0]+'（'+KB(arr[1][1].sz)+'）':'')+'。</div>'}
+  // IndexedDB
+  const I=await idbReport();
+  if(I.list===null){h+='<div class="card msg"><h2>IndexedDB</h2>この端末では一覧を取得できません（全体の使用量だけ上に出ています）。</div>'}
+  else{const mx=Math.max(1,...I.list.map(d=>d.sz));h+='<div class="card"><h2>IndexedDB（大きく入れても平気な保存場所）</h2>'+(I.list.length?I.list.sort((a,b)=>b.sz-a.sz).map(d=>{rep.push('  IDB '+d.name+' '+KB(d.sz)+' '+d.cnt+'件');return appRow(d.name,d.sz,d.app+'　'+d.cnt+(d.capped?'+':'')+'件・'+d.stores+'ストア'+(d.err?'（読めませんでした）':''),mx)}).join(''):'<div class="msg">まだありません</div>')+'</div>'}
+  // キャッシュ
+  try{const ks=await caches.keys();if(ks.length){let t='';for(const k of ks){const c=await caches.open(k);t+=k+'（'+(await c.keys()).length+'件） '}h+='<div class="card msg"><h2>アプリ本体のキャッシュ</h2>'+t+'</div>';rep.push('caches '+ks.join(','))}}catch(e){}
+  $('out').innerHTML=h;REPORT=rep.join('\n');$('go').disabled=false}
+$('go').onclick=run;
+$('persist').onclick=async()=>{try{const ok=await navigator.storage.persist();alert(ok?'消えにくい設定にできました。':'この端末では許可されませんでした（ホーム画面に追加して使うと消えにくくなります）。')}catch(e){alert('この環境では使えません')}run()};
+$('probe').onclick=async()=>{$('probe').disabled=true;const K='__sc_probe__';let lo=0,hi=6*1024*1024/2,best=0;
+  const tryw=n=>{try{localStorage.setItem(K,'x'.repeat(n));return true}catch(e){return false}};
+  try{localStorage.removeItem(K);if(!tryw(1)){best=0}else{while(hi-lo>2048){const mid=(lo+hi)>>1;if(tryw(mid)){lo=mid;best=mid}else hi=mid}}}finally{try{localStorage.removeItem(K)}catch(e){}}
+  $('probe').disabled=false;alert('あと書ける量の目安：'+KB(best*2)+'（localStorage）\n※測るために一時的に書いて、すぐ消しています。');run()};
+$('copy').onclick=async()=>{try{await navigator.clipboard.writeText(REPORT||'まだ調べていません');alert('コピーしました')}catch(e){prompt('コピーしてください',REPORT)}};
+if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
+window.__sc={appOf,lsReport,run};run();
+</script></body></html>
